@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HL Orderbook Viewer</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #21262d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --bid: #26a641;
+    --bid-bg: rgba(38, 166, 65, 0.08);
+    --ask: #f85149;
+    --ask-bg: rgba(248, 81, 73, 0.08);
+    --accent: #58a6ff;
+    --whale: #d2a8ff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .header h1 { font-size: 15px; font-weight: 600; }
+  .coin-search-wrap {
+    position: relative;
+  }
+  .header .coin-search {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 140px;
+  }
+  .header .coin-search:focus { border-color: var(--accent); outline: none; }
+  .coin-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 200px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    z-index: 100;
+    display: none;
+    margin-top: 2px;
+  }
+  .coin-dropdown.open { display: block; }
+  .coin-option {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
+  }
+  .coin-option:hover, .coin-option.highlighted { background: rgba(88,166,255,0.15); }
+  .coin-option .coin-name { font-weight: 600; }
+
+  /* Tick size & value toggle */
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ctrl-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+  .ctrl-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    min-width: 28px;
+    text-align: center;
+  }
+  .ctrl-btn:hover { border-color: var(--accent); }
+  .ctrl-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  .tick-value {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 11px;
+    min-width: 60px;
+    text-align: center;
+    font-weight: 600;
+  }
+
+  .header .status {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .header .status.connected { color: var(--bid); }
+  .header .status.disconnected { color: var(--ask); }
+
+  /* Main layout */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Orderbook panel */
+  .book-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .book-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 80px 1fr;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .book-header span:nth-child(2) { text-align: right; }
+  .book-header span:nth-child(3) { text-align: center; }
+  .book-header span:nth-child(4) { text-align: right; }
+
+  .book-container {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .asks-section, .bids-section {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .asks-section {
+    display: flex;
+    flex-direction: column-reverse;
+  }
+
+  /* Spread bar */
+  .spread-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 6px 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .spread-bar .spread-label { color: var(--text-dim); }
+  .spread-bar .spread-value { color: var(--accent); font-weight: 600; }
+
+  /* Order row */
+  .order-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 80px 1fr;
+    padding: 3px 12px;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.1s;
+  }
+  .order-row:hover { background: rgba(255,255,255,0.04); }
+
+  .order-row .price { font-weight: 600; }
+  .order-row .size { text-align: right; }
+  .order-row .count { text-align: center; color: var(--text-dim); font-size: 11px; }
+  .order-row .cumulative { text-align: right; color: var(--text-dim); }
+
+  .order-row.bid .price { color: var(--bid); }
+  .order-row.ask .price { color: var(--ask); }
+
+  /* Depth bar behind row */
+  .order-row .depth-bar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0.12;
+  }
+  .order-row.bid .depth-bar { background: var(--bid); }
+  .order-row.ask .depth-bar { background: var(--ask); }
+
+  /* Whale indicators */
+  .whale-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--whale);
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  /* Expanded whale detail */
+  .whale-detail {
+    padding: 4px 12px 4px 32px;
+    font-size: 11px;
+    display: none;
+  }
+  .whale-detail.visible { display: block; }
+  .whale-detail .whale-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .whale-detail .wallet-addr {
+    color: var(--whale);
+    font-size: 11px;
+  }
+  .whale-detail .whale-sz {
+    color: var(--text);
+    margin-left: auto;
+  }
+  .whale-detail .whale-pct {
+    color: var(--text-dim);
+    font-size: 10px;
+    min-width: 50px;
+    text-align: right;
+  }
+
+  /* Side panel */
+  .side-panel {
+    width: 340px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .panel-tab {
+    flex: 1;
+    padding: 8px;
+    text-align: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--text-dim);
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .panel-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .panel-section { display: none; }
+  .panel-section.active { display: block; }
+
+  /* Wallet input */
+  .wallet-input-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .wallet-input-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+  }
+  .wallet-input-row input::placeholder { color: var(--text-dim); }
+  .wallet-input-row button {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* Tracked wallet list */
+  .tracked-wallet {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+  .tracked-wallet:hover { background: rgba(255,255,255,0.04); }
+  .tracked-wallet .tw-addr {
+    color: var(--whale);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tracked-wallet .tw-remove {
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .tracked-wallet .tw-remove:hover { color: var(--ask); }
+  .tracked-wallet .tw-ban {
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 6px;
+    font-size: 10px;
+  }
+  .tracked-wallet .tw-ban:hover { color: var(--ask); }
+
+  /* Banned wallet list */
+  .banned-wallet {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 11px;
+    background: rgba(248, 81, 73, 0.08);
+  }
+  .banned-wallet .bw-addr {
+    color: var(--ask);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-decoration: none;
+  }
+  .banned-wallet .bw-unban {
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-left: 8px;
+    font-size: 10px;
+  }
+  .banned-wallet .bw-unban:hover { color: var(--bid); }
+
+  /* Whale list */
+  .whale-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    margin-bottom: 3px;
+    font-size: 11px;
+    border-left: 2px solid var(--whale);
+  }
+  .whale-item:hover { background: rgba(255,255,255,0.04); }
+  .whale-item .wi-rank { color: var(--text-dim); width: 22px; font-size: 10px; }
+  .whale-item .wi-addr {
+    flex: 1;
+    color: var(--whale);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .whale-item .wi-vol { color: var(--text); font-size: 10px; }
+  .whale-item .wi-bias {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+  .whale-item .wi-bias.BUY { color: var(--bid); background: var(--bid-bg); }
+  .whale-item .wi-bias.SELL { color: var(--ask); background: var(--ask-bg); }
+  .whale-item .wi-actions { display: flex; gap: 4px; }
+  .whale-item .wi-btn {
+    font-size: 9px;
+    cursor: pointer;
+    color: var(--text-dim);
+    padding: 1px 4px;
+    border-radius: 2px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-family: inherit;
+  }
+  .whale-item .wi-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .whale-item .wi-btn.ban-btn:hover { border-color: var(--ask); color: var(--ask); }
+
+  /* Banned highlight in orderbook */
+  .wallet-banned { color: var(--ask) !important; font-weight: 700; }
+
+  /* Trade list */
+  .trade-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 1fr;
+    padding: 3px 4px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border);
+  }
+  .trade-row .trade-time { color: var(--text-dim); }
+  .trade-row .trade-px { text-align: right; }
+  .trade-row .trade-sz { text-align: right; }
+  .trade-row.buy .trade-px { color: var(--bid); }
+  .trade-row.sell .trade-px { color: var(--ask); }
+
+  /* Top traders */
+  .trader-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .trader-row:hover { background: rgba(255,255,255,0.04); }
+  .trader-row .tr-rank { color: var(--text-dim); width: 24px; }
+  .trader-row .tr-addr { color: var(--whale); flex: 1; }
+  .trader-row .tr-vol { color: var(--text); margin-left: 8px; }
+  .trader-row .tr-bias {
+    margin-left: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+  .trader-row .tr-bias.BUY { color: var(--bid); background: var(--bid-bg); }
+  .trader-row .tr-bias.SELL { color: var(--ask); background: var(--ask-bg); }
+
+  /* Auto-track button */
+  .auto-track-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    margin-bottom: 8px;
+  }
+  .auto-track-btn:hover { background: rgba(88, 166, 255, 0.1); }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    gap: 16px;
+    padding: 6px 16px;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>HL Orderbook</h1>
+  <div class="coin-search-wrap">
+    <input type="text" class="coin-search" id="coinSearch" placeholder="PUMP" value="PUMP" autocomplete="off">
+    <div class="coin-dropdown" id="coinDropdown"></div>
+  </div>
+
+  <div class="header-controls">
+    <!-- Tick size grouping -->
+    <div class="ctrl-group">
+      <span class="ctrl-label">Group</span>
+      <button class="ctrl-btn" onclick="changeTick(-1)">−</button>
+      <span class="tick-value" id="tickValue">1</span>
+      <button class="ctrl-btn" onclick="changeTick(1)">+</button>
+    </div>
+
+    <!-- Value display: token or USDC -->
+    <div class="ctrl-group">
+      <span class="ctrl-label">Size in</span>
+      <button class="ctrl-btn active" id="btnToken" onclick="setValueMode('token')">Token</button>
+      <button class="ctrl-btn" id="btnUsdc" onclick="setValueMode('usdc')">USDC</button>
+    </div>
+  </div>
+
+  <span class="status disconnected" id="statusDot">● Disconnected</span>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <!-- Orderbook -->
+  <div class="book-panel">
+    <div class="book-header">
+      <span>Price (USD)</span>
+      <span>Size</span>
+      <span>Orders</span>
+      <span>Cumulative</span>
+    </div>
+    <div class="book-container">
+      <div class="asks-section" id="asksSection"></div>
+      <div class="spread-bar">
+        <span class="spread-label">Spread</span>
+        <span class="spread-value" id="spreadValue">—</span>
+        <span class="spread-label" id="spreadPct"></span>
+      </div>
+      <div class="bids-section" id="bidsSection"></div>
+    </div>
+  </div>
+
+  <!-- Side panel -->
+  <div class="side-panel">
+    <div class="panel-tabs">
+      <div class="panel-tab active" data-tab="wallets">Wallets</div>
+      <div class="panel-tab" data-tab="whales">Whales</div>
+      <div class="panel-tab" data-tab="banned">Banned</div>
+      <div class="panel-tab" data-tab="trades">Trades</div>
+      <div class="panel-tab" data-tab="top">Top Traders</div>
+    </div>
+    <div class="panel-content">
+      <!-- Wallets tab -->
+      <div class="panel-section active" id="tab-wallets">
+        <div class="wallet-input-row">
+          <input type="text" id="walletInput" placeholder="0x... wallet address">
+          <button id="trackBtn">Track</button>
+        </div>
+        <div id="trackedList"></div>
+      </div>
+
+      <!-- Whales tab -->
+      <div class="panel-section" id="tab-whales">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Auto-detected whales on this ticker (banned excluded). Volume-based detection.</div>
+        <button class="auto-track-btn" id="trackAllWhalesBtn">Track all whales</button>
+        <div id="whalesList"></div>
+      </div>
+
+      <!-- Banned tab -->
+      <div class="panel-section" id="tab-banned">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Banned wallets appear in red everywhere in the orderbook and trade feed.</div>
+        <div class="wallet-input-row">
+          <input type="text" id="banInput" placeholder="0x... wallet to ban">
+          <button id="banBtn" style="background:var(--ask)">Ban</button>
+        </div>
+        <div id="bannedList"></div>
+      </div>
+
+      <!-- Trades tab -->
+      <div class="panel-section" id="tab-trades">
+        <div id="tradesList"></div>
+      </div>
+
+      <!-- Top traders tab -->
+      <div class="panel-section" id="tab-top">
+        <button class="auto-track-btn" id="autoTrackBtn">Auto-track top 5 wallets</button>
+        <div id="topTradersList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-bar">
+  <span id="statsOrders">—</span>
+  <span id="statsTracked">Tracked: 0</span>
+  <span id="statsLatency">—</span>
+</div>
+
+<script>
+// =========================================================================
+// WebSocket connection
+// =========================================================================
+
+let ws = null;
+let bookData = null;
+let expandedPrices = new Set();
+
+// Tick size & value mode
+// Dynamic tick steps generated from mid price
+let tickSteps = [];
+let tickIdx = 0;
+let tickSize = 1;
+let valueMode = "token"; // "token" or "usdc"
+
+function buildTickSteps(midPrice) {
+  if (!midPrice || midPrice <= 0) return;
+  const mag = Math.floor(Math.log10(midPrice));
+  const steps = [];
+  // Go from extremely fine (price / 1e8) to coarse (price * 10)
+  for (let e = mag - 8; e <= mag + 1; e++) {
+    const base = Math.pow(10, e);
+    steps.push(base);
+    steps.push(base * 2);
+    steps.push(base * 5);
+  }
+  const filtered = steps.filter(s => s > 0 && s <= midPrice * 2).sort((a, b) => a - b);
+  if (filtered.length === 0) return;
+  tickSteps = filtered;
+  // Default: smallest tick (no grouping = raw L2 data)
+  tickIdx = 0;
+  tickSize = tickSteps[tickIdx];
+  updateTickDisplay();
+}
+
+function changeTick(dir) {
+  if (tickSteps.length === 0) return;
+  tickIdx = Math.max(0, Math.min(tickSteps.length - 1, tickIdx + dir));
+  tickSize = tickSteps[tickIdx];
+  updateTickDisplay();
+  renderBook();
+}
+
+function updateTickDisplay() {
+  const el = document.getElementById("tickValue");
+  if (tickSize >= 1) el.textContent = tickSize.toLocaleString();
+  else el.textContent = tickSize.toPrecision(3);
+}
+
+function setValueMode(mode) {
+  valueMode = mode;
+  document.getElementById("btnToken").classList.toggle("active", mode === "token");
+  document.getElementById("btnUsdc").classList.toggle("active", mode === "usdc");
+  renderBook();
+}
+
+function groupLevels(levels, side) {
+  // Group raw levels by tick size
+  const grouped = {};
+  for (const lvl of levels) {
+    const px = parseFloat(lvl.px);
+    // Round down for bids (floor to tick), round up for asks (ceil to tick)
+    const groupedPx = side === "bid"
+      ? Math.floor(px / tickSize) * tickSize
+      : Math.ceil(px / tickSize) * tickSize;
+    const key = groupedPx.toFixed(8);
+    if (!grouped[key]) {
+      grouped[key] = { px: groupedPx, sz: 0, n: 0, whales: [] };
+    }
+    grouped[key].sz += parseFloat(lvl.sz);
+    grouped[key].n += (lvl.n || 1);
+    if (lvl.whales) grouped[key].whales.push(...lvl.whales);
+  }
+  const arr = Object.values(grouped);
+  arr.sort((a, b) => side === "bid" ? b.px - a.px : a.px - b.px);
+  return arr;
+}
+
+function getMidPrice() {
+  if (!bookData || !bookData.asks.length || !bookData.bids.length) return 0;
+  return (parseFloat(bookData.asks[0].px) + parseFloat(bookData.bids[0].px)) / 2;
+}
+
+function displaySize(sz, px) {
+  if (valueMode === "usdc") {
+    const usdcVal = parseFloat(sz) * parseFloat(px);
+    return formatNum(usdcVal);
+  }
+  return formatNum(sz);
+}
+
+function connect() {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById("statusDot").textContent = "● Connected";
+    document.getElementById("statusDot").className = "status connected";
+  };
+
+  ws.onclose = () => {
+    document.getElementById("statusDot").textContent = "● Disconnected";
+    document.getElementById("statusDot").className = "status disconnected";
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "book") {
+      bookData = msg.data;
+      // Build tick steps on first data or coin switch
+      if (tickSteps.length === 0) {
+        const mid = getMidPrice();
+        if (mid > 0) buildTickSteps(mid);
+      }
+      renderBook();
+      renderTrades();
+      renderTopTraders();
+      renderTrackedWallets();
+      renderBannedWallets();
+      renderWhales();
+      renderStats();
+    } else if (msg.type === "info") {
+      console.log("[INFO]", msg.msg);
+    }
+  };
+}
+
+function send(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+// =========================================================================
+// Rendering
+// =========================================================================
+
+function formatNum(n, decimals = 2) {
+  const num = parseFloat(n);
+  if (isNaN(num)) return "—";
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(2) + "K";
+  return num.toFixed(decimals);
+}
+
+function formatPrice(n) {
+  const num = parseFloat(n);
+  if (isNaN(num) || num === 0) return "—";
+  if (num >= 1000) return num.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (num >= 100) return num.toFixed(2);
+  if (num >= 1) return num.toFixed(3);
+  if (num >= 0.01) return num.toFixed(5);
+  // For very small prices, show enough significant digits
+  const digits = Math.max(4, -Math.floor(Math.log10(num)) + 3);
+  return num.toFixed(digits);
+}
+
+function shortAddr(addr) {
+  if (!addr || addr.length < 12) return addr || "?";
+  return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
+function renderBook() {
+  if (!bookData) return;
+
+  // Group levels by tick size
+  const gBids = groupLevels(bookData.bids, "bid");
+  const gAsks = groupLevels(bookData.asks, "ask");
+
+  // Compute cumulative (in display unit)
+  let bidCum = 0, askCum = 0;
+  const bidCums = gBids.map(b => {
+    const val = valueMode === "usdc" ? b.sz * b.px : b.sz;
+    return (bidCum += val, bidCum);
+  });
+  const askCums = gAsks.map(a => {
+    const val = valueMode === "usdc" ? a.sz * a.px : a.sz;
+    return (askCum += val, askCum);
+  });
+  const maxCum = Math.max(bidCum, askCum) || 1;
+
+  // Spread
+  if (gAsks.length && gBids.length) {
+    const bestAsk = gAsks[0].px;
+    const bestBid = gBids[0].px;
+    const spread = bestAsk - bestBid;
+    const spreadPct = ((spread / bestAsk) * 100).toFixed(4);
+    document.getElementById("spreadValue").textContent = formatPrice(spread);
+    document.getElementById("spreadPct").textContent = `(${spreadPct}%)`;
+  }
+
+  const sizeLabel = valueMode === "usdc" ? "Size (USDC)" : "Size";
+  const cumLabel = valueMode === "usdc" ? "Total (USDC)" : "Cumulative";
+  document.querySelector(".book-header").innerHTML = `
+    <span>Price (USD)</span><span>${sizeLabel}</span><span>Orders</span><span>${cumLabel}</span>`;
+
+  // Render asks (reversed — lowest at bottom)
+  const asksHtml = gAsks.map((a, i) => {
+    const cum = askCums[i];
+    const depthW = (cum / maxCum * 100).toFixed(1);
+    const hasWhales = a.whales && a.whales.length > 0;
+    const pxKey = a.px.toFixed(8);
+    const expanded = expandedPrices.has("ask-" + pxKey);
+    let html = `<div class="order-row ask" onclick="toggleExpand('ask-${pxKey}')">
+      <div class="depth-bar" style="width:${depthW}%"></div>
+      <span class="price">${formatPrice(a.px)}${hasWhales ? '<span class="whale-dot"></span>' : ''}</span>
+      <span class="size">${displaySize(a.sz, a.px)}</span>
+      <span class="count">${a.n}</span>
+      <span class="cumulative">${formatNum(cum)}</span>
+    </div>`;
+    if (expanded) {
+      html += renderLevelDetail(a, "ask");
+    }
+    return html;
+  }).join("");
+
+  // Render bids
+  const bidsHtml = gBids.map((b, i) => {
+    const cum = bidCums[i];
+    const depthW = (cum / maxCum * 100).toFixed(1);
+    const hasWhales = b.whales && b.whales.length > 0;
+    const pxKey = b.px.toFixed(8);
+    const expanded = expandedPrices.has("bid-" + pxKey);
+    let html = `<div class="order-row bid" onclick="toggleExpand('bid-${pxKey}')">
+      <div class="depth-bar" style="width:${depthW}%"></div>
+      <span class="price">${formatPrice(b.px)}${hasWhales ? '<span class="whale-dot"></span>' : ''}</span>
+      <span class="size">${displaySize(b.sz, b.px)}</span>
+      <span class="count">${b.n}</span>
+      <span class="cumulative">${formatNum(cum)}</span>
+    </div>`;
+    if (expanded) {
+      html += renderLevelDetail(b, "bid");
+    }
+    return html;
+  }).join("");
+
+  document.getElementById("asksSection").innerHTML = asksHtml;
+  document.getElementById("bidsSection").innerHTML = bidsHtml;
+}
+
+function renderLevelDetail(level, side) {
+  const px = level.px;
+  const totalSz = level.sz || 1;
+  let html = '<div class="whale-detail visible">';
+
+  // Section 1: Level info
+  const usdcVal = totalSz * px;
+  html += `<div class="whale-row" style="border-bottom:1px solid var(--border);padding-bottom:4px;margin-bottom:4px">
+    <span style="color:var(--text-dim);font-size:10px">LEVEL INFO</span>
+    <span class="whale-sz">${level.n} orders</span>
+    <span class="whale-pct">${formatNum(totalSz)} tok / $${formatNum(usdcVal)}</span>
+  </div>`;
+
+  // Section 2: Tracked whale orders at this level
+  if (level.whales && level.whales.length > 0) {
+    html += `<div style="color:var(--whale);font-size:10px;padding:2px 0">TRACKED WALLETS</div>`;
+    for (const w of level.whales) {
+      const pct = ((parseFloat(w.sz) / totalSz) * 100).toFixed(1);
+      const szDisplay = valueMode === "usdc" ? formatNum(parseFloat(w.sz) * px) : formatNum(w.sz);
+      html += `<div class="whale-row">
+        <span class="wallet-addr" title="${w.wallet}">${shortAddr(w.wallet)}</span>
+        <span class="whale-sz">${szDisplay}</span>
+        <span class="whale-pct">${pct}%</span>
+      </div>`;
+    }
+  }
+
+  // Section 3: Recent trades near this price
+  if (bookData && bookData.recent_trades) {
+    const halfTick = tickSize / 2;
+    const nearTrades = bookData.recent_trades.filter(t => {
+      const tpx = parseFloat(t.px);
+      return Math.abs(tpx - px) <= halfTick;
+    });
+
+    if (nearTrades.length > 0) {
+      // Aggregate by wallet
+      const walletMap = {};
+      for (const t of nearTrades) {
+        for (const u of (t.users || [])) {
+          if (!walletMap[u]) walletMap[u] = { vol: 0, count: 0 };
+          walletMap[u].vol += parseFloat(t.sz || 0);
+          walletMap[u].count++;
+        }
+      }
+      const sorted = Object.entries(walletMap).sort((a, b) => b[1].vol - a[1].vol).slice(0, 10);
+      const totalTradeVol = sorted.reduce((s, [, v]) => s + v.vol, 0) || 1;
+
+      const bannedSet = new Set(bookData.banned_wallets || []);
+      html += `<div style="color:var(--accent);font-size:10px;padding:2px 0;margin-top:4px;border-top:1px solid var(--border)">RECENT TRADERS AT THIS LEVEL (${nearTrades.length} trades)</div>`;
+      for (const [wallet, stats] of sorted) {
+        const pct = ((stats.vol / totalTradeVol) * 100).toFixed(1);
+        const szDisplay = valueMode === "usdc" ? formatNum(stats.vol * px) : formatNum(stats.vol);
+        const wb = bannedSet.has(wallet);
+        const addrColor = wb ? "var(--ask)" : "var(--accent)";
+        const rowBg = wb ? 'background:rgba(248,81,73,0.1);' : '';
+        html += `<div class="whale-row" style="${rowBg}">
+          <a class="wallet-addr" href="https://hypurrscan.io/address/${wallet}" target="_blank" title="${wallet}" style="color:${addrColor};text-decoration:none" onclick="event.stopPropagation()">${wb ? '🚫 ' : ''}${shortAddr(wallet)}</a>
+          <span style="color:var(--text-dim);cursor:pointer;font-size:9px;margin-left:2px" onclick="event.stopPropagation(); trackFromTop('${wallet}')">+track</span>
+          <span class="whale-sz">${szDisplay} (${stats.count}x)</span>
+          <span class="whale-pct">${pct}%</span>
+        </div>`;
+      }
+    } else {
+      html += `<div style="color:var(--text-dim);font-size:10px;padding:4px 0;margin-top:4px;border-top:1px solid var(--border)">No recent trades at this level</div>`;
+    }
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function toggleExpand(key) {
+  if (expandedPrices.has(key)) {
+    expandedPrices.delete(key);
+  } else {
+    expandedPrices.add(key);
+  }
+  renderBook();
+}
+
+function renderTrades() {
+  if (!bookData || !bookData.recent_trades) return;
+  const bannedSet = new Set(bookData.banned_wallets || []);
+  const trades = bookData.recent_trades.slice(-50).reverse();
+  const html = trades.map(t => {
+    const side = (t.side || "").toUpperCase();
+    const cls = (side === "B" || side === "BUY") ? "buy" : "sell";
+    const time = t.time ? new Date(t.time).toLocaleTimeString() : "—";
+    const hasBanned = (t.users || []).some(u => bannedSet.has(u));
+    const bannedStyle = hasBanned ? 'style="background:rgba(248,81,73,0.12);border-left:2px solid var(--ask)"' : '';
+    const bannedUsers = hasBanned
+      ? `<span style="color:var(--ask);font-size:9px;grid-column:1/-1;padding:1px 0">${(t.users||[]).filter(u=>bannedSet.has(u)).map(u=>shortAddr(u)).join(', ')}</span>`
+      : '';
+    return `<div class="trade-row ${cls}" ${bannedStyle}>
+      <span class="trade-time">${time}</span>
+      <span class="trade-px">${formatPrice(t.px)}</span>
+      <span class="trade-sz">${formatNum(t.sz)}</span>
+      ${bannedUsers}
+    </div>`;
+  }).join("");
+  document.getElementById("tradesList").innerHTML = html;
+}
+
+function renderTopTraders() {
+  if (!bookData || !bookData.top_traders) return;
+  const bannedSet = new Set(bookData.banned_wallets || []);
+  const html = bookData.top_traders.map((t, i) => {
+    const wb = bannedSet.has(t.wallet);
+    const addrColor = wb ? "var(--ask)" : "var(--whale)";
+    const rowBg = wb ? 'background:rgba(248,81,73,0.08);' : '';
+    return `<div class="trader-row" style="${rowBg}">
+      <span class="tr-rank">#${i + 1}</span>
+      <a class="tr-addr" href="https://hypurrscan.io/address/${t.wallet}" target="_blank" title="${t.wallet}" style="text-decoration:none;color:${addrColor}">${wb ? '🚫 ' : ''}${shortAddr(t.wallet)}</a>
+      <span class="tr-vol">${formatNum(t.volume)}</span>
+      <span class="tr-bias ${t.bias}">${t.bias}</span>
+      <span style="color:var(--text-dim);cursor:pointer;font-size:9px;margin-left:4px" onclick="trackFromTop('${t.wallet}')">+track</span>
+    </div>`;
+  }).join("");
+  document.getElementById("topTradersList").innerHTML = html;
+}
+
+function isBanned(wallet) {
+  return bookData && bookData.banned_wallets && bookData.banned_wallets.includes(wallet);
+}
+
+function renderTrackedWallets() {
+  if (!bookData || !bookData.tracked_wallets) return;
+  const html = bookData.tracked_wallets.map(w => {
+    const banned = isBanned(w);
+    const addrColor = banned ? "var(--ask)" : "var(--whale)";
+    return `<div class="tracked-wallet" ${banned ? 'style="background:rgba(248,81,73,0.08)"' : ''}>
+      <a class="tw-addr" href="https://hypurrscan.io/address/${w}" target="_blank" title="${w}" style="text-decoration:none;color:${addrColor}">${shortAddr(w)}</a>
+      <span class="tw-ban" onclick="banWallet('${w}')" title="${banned ? 'Already banned' : 'Ban this wallet'}">${banned ? '🚫' : 'ban'}</span>
+      <span class="tw-remove" onclick="untrack('${w}')">✕</span>
+    </div>`;
+  }).join("");
+  document.getElementById("trackedList").innerHTML = html;
+  document.getElementById("statsTracked").textContent = `Tracked: ${bookData.tracked_wallets.length}`;
+}
+
+function renderBannedWallets() {
+  if (!bookData || !bookData.banned_wallets) return;
+  const html = bookData.banned_wallets.map(w => {
+    return `<div class="banned-wallet">
+      <a class="bw-addr" href="https://hypurrscan.io/address/${w}" target="_blank" title="${w}">${shortAddr(w)}</a>
+      <span style="color:var(--text-dim);cursor:pointer;font-size:9px;margin-left:auto" onclick="trackFromTop('${w}')">+track</span>
+      <span class="bw-unban" onclick="unbanWallet('${w}')">unban</span>
+    </div>`;
+  }).join("");
+  document.getElementById("bannedList").innerHTML = html;
+}
+
+function banWallet(wallet) {
+  send({ type: "ban_wallet", wallet });
+}
+
+function unbanWallet(wallet) {
+  send({ type: "unban_wallet", wallet });
+}
+
+function renderWhales() {
+  if (!bookData || !bookData.whales) return;
+  const trackedSet = new Set(bookData.tracked_wallets || []);
+  const html = bookData.whales.map((w, i) => {
+    const isTracked = trackedSet.has(w.wallet);
+    return `<div class="whale-item">
+      <span class="wi-rank">#${i + 1}</span>
+      <a class="wi-addr" href="https://hypurrscan.io/address/${w.wallet}" target="_blank" title="${w.wallet}">${shortAddr(w.wallet)}</a>
+      <span class="wi-vol">${formatNum(w.volume)}</span>
+      <span class="wi-bias ${w.bias}">${w.bias}</span>
+      <span class="wi-actions">
+        ${isTracked ? '<span style="color:var(--whale);font-size:9px">tracked</span>' : `<button class="wi-btn" onclick="trackFromTop('${w.wallet}')">+track</button>`}
+        <button class="wi-btn ban-btn" onclick="banWallet('${w.wallet}')">ban</button>
+      </span>
+    </div>`;
+  }).join("");
+  document.getElementById("whalesList").innerHTML = html || '<div style="color:var(--text-dim);font-size:11px;padding:8px">Waiting for trade data to detect whales...</div>';
+}
+
+function renderStats() {
+  if (!bookData) return;
+  const mid = getMidPrice();
+  const bidVol = bookData.bids.reduce((s, b) => {
+    const sz = parseFloat(b.sz);
+    return s + (valueMode === "usdc" ? sz * parseFloat(b.px) : sz);
+  }, 0);
+  const askVol = bookData.asks.reduce((s, a) => {
+    const sz = parseFloat(a.sz);
+    return s + (valueMode === "usdc" ? sz * parseFloat(a.px) : sz);
+  }, 0);
+  const unit = valueMode === "usdc" ? " USDC" : "";
+  document.getElementById("statsOrders").textContent =
+    `Bid vol: ${formatNum(bidVol)}${unit} | Ask vol: ${formatNum(askVol)}${unit}`;
+}
+
+// =========================================================================
+// Actions
+// =========================================================================
+
+function trackFromTop(wallet) {
+  send({ type: "track_wallet", wallet });
+}
+
+function untrack(wallet) {
+  send({ type: "untrack_wallet", wallet });
+}
+
+// Coin search
+let allCoins = [];
+let highlightIdx = -1;
+
+async function loadCoins() {
+  try {
+    const resp = await fetch("/api/coins");
+    const data = await resp.json();
+    allCoins = data.coins || [];
+  } catch (e) {
+    console.error("Failed to load coins", e);
+  }
+}
+
+function renderCoinDropdown(filter) {
+  const dd = document.getElementById("coinDropdown");
+  const query = filter.toUpperCase();
+  const filtered = query
+    ? allCoins.filter(c => c.toUpperCase().includes(query))
+    : allCoins;
+  const shown = filtered.slice(0, 30);
+
+  dd.innerHTML = shown.map((c, i) => {
+    const cls = i === highlightIdx ? "coin-option highlighted" : "coin-option";
+    return `<div class="${cls}" data-coin="${c}" onmousedown="selectCoin('${c}')">
+      <span class="coin-name">${c}</span>
+    </div>`;
+  }).join("");
+  dd.classList.toggle("open", shown.length > 0 && document.activeElement === document.getElementById("coinSearch"));
+}
+
+function selectCoin(coin) {
+  const input = document.getElementById("coinSearch");
+  input.value = coin;
+  document.getElementById("coinDropdown").classList.remove("open");
+  highlightIdx = -1;
+  tickSteps = []; // reset — will rebuild on next book data
+  send({ type: "switch_coin", coin });
+}
+
+const coinInput = document.getElementById("coinSearch");
+coinInput.addEventListener("focus", () => {
+  coinInput.select();
+  renderCoinDropdown(coinInput.value);
+});
+coinInput.addEventListener("input", () => {
+  highlightIdx = -1;
+  renderCoinDropdown(coinInput.value);
+});
+coinInput.addEventListener("blur", () => {
+  setTimeout(() => document.getElementById("coinDropdown").classList.remove("open"), 150);
+});
+coinInput.addEventListener("keydown", (e) => {
+  const dd = document.getElementById("coinDropdown");
+  const options = dd.querySelectorAll(".coin-option");
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    highlightIdx = Math.min(highlightIdx + 1, options.length - 1);
+    renderCoinDropdown(coinInput.value);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    highlightIdx = Math.max(highlightIdx - 1, 0);
+    renderCoinDropdown(coinInput.value);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (highlightIdx >= 0 && options[highlightIdx]) {
+      selectCoin(options[highlightIdx].dataset.coin);
+    } else if (coinInput.value.trim()) {
+      selectCoin(coinInput.value.trim().toUpperCase());
+    }
+  } else if (e.key === "Escape") {
+    dd.classList.remove("open");
+    coinInput.blur();
+  }
+});
+
+loadCoins();
+
+// Track wallet button
+document.getElementById("trackBtn").addEventListener("click", () => {
+  const input = document.getElementById("walletInput");
+  const wallet = input.value.trim();
+  if (wallet) {
+    send({ type: "track_wallet", wallet });
+    input.value = "";
+  }
+});
+
+document.getElementById("walletInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("trackBtn").click();
+});
+
+// Auto-track button
+document.getElementById("autoTrackBtn").addEventListener("click", () => {
+  send({ type: "auto_track_top", n: 5 });
+});
+
+// Track all whales button
+document.getElementById("trackAllWhalesBtn").addEventListener("click", () => {
+  if (bookData && bookData.whales) {
+    for (const w of bookData.whales) {
+      send({ type: "track_wallet", wallet: w.wallet });
+    }
+  }
+});
+
+// Ban wallet button
+document.getElementById("banBtn").addEventListener("click", () => {
+  const input = document.getElementById("banInput");
+  const wallet = input.value.trim();
+  if (wallet) {
+    send({ type: "ban_wallet", wallet });
+    input.value = "";
+  }
+});
+document.getElementById("banInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("banBtn").click();
+});
+
+// Tab switching
+document.querySelectorAll(".panel-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".panel-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".panel-section").forEach(s => s.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
+  });
+});
+
+// =========================================================================
+// Init
+// =========================================================================
+
+connect();
+</script>
+</body>
+</html>
